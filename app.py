@@ -45,7 +45,7 @@ else:
 TG_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 PLANS = {
-    "week": {"stars": 99, "days": 7, "title": "Premium на неделю"},
+    "week": {"stars": 39, "days": 7, "title": "Premium на неделю"},
     "month": {"stars": 249, "days": 30, "title": "Premium на месяц"},
     "year": {"stars": 1490, "days": 365, "title": "Premium на год"},
 }
