@@ -279,6 +279,7 @@ async def stars_invoice(request: Request):
         "title": plan["title"],
         "description": "Доступ ко всем практикам, энергодыханию и материалам",
         "payload": payload,
+        "provider_token": "",  # для Telegram Stars — пустая строка
         "currency": "XTR",
         "prices": [{"label": plan["title"], "amount": plan["stars"]}],
     }
