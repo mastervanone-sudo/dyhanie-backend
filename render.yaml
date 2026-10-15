@@ -12,9 +12,11 @@ services:
         value: 3.12.10
       - key: ALLOW_ORIGIN
         value: https://mastervanone-sudo.github.io
-      - key: DB_PATH
-        value: /tmp/premium.db
+      - key: REFERRAL_PERCENT
+        value: "10"
       - key: BOT_TOKEN
         sync: false
       - key: WEBHOOK_SECRET
+        sync: false
+      - key: DATABASE_URL
         sync: false
