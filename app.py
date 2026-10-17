@@ -32,8 +32,13 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "").strip()
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 DB_PATH = os.environ.get("DB_PATH", "premium.db")
-ALLOW_ORIGIN = os.environ.get("ALLOW_ORIGIN", "*")
+# CORS: по умолчанию только origin мини-аппа, не «*»
+ALLOW_ORIGIN = os.environ.get("ALLOW_ORIGIN", "https://mastervanone-sudo.github.io").strip()
 REFERRAL_PERCENT = int(os.environ.get("REFERRAL_PERCENT", "10"))
+# Максимальный возраст initData (сек) — защита от replay украденных данных
+MAX_AUTH_AGE = int(os.environ.get("MAX_AUTH_AGE", "86400"))
+# Токен для служебных эндпоинтов (например /set_webhook). Если пусто — эндпоинт отключён.
+SETUP_TOKEN = os.environ.get("SETUP_TOKEN", "").strip()
 
 USE_PG = DATABASE_URL.startswith("postgres")
 if USE_PG:
@@ -115,6 +120,28 @@ init_db()
 
 def now() -> int:
     return int(time.time())
+
+
+# ---------- простой лимитер запросов (in-memory, на процесс) ----------
+import threading
+from collections import defaultdict
+
+_rl_lock = threading.Lock()
+_rl_hits = defaultdict(list)
+
+
+def rate_limit(key: str, limit: int, window: int) -> bool:
+    """True — можно; False — превышен лимит (limit запросов за window секунд)."""
+    t = time.time()
+    with _rl_lock:
+        hits = _rl_hits[key]
+        cutoff = t - window
+        while hits and hits[0] < cutoff:
+            hits.pop(0)
+        if len(hits) >= limit:
+            return False
+        hits.append(t)
+    return True
 
 
 def gen_code() -> str:
@@ -248,6 +275,10 @@ def validate_init_data(init_data: str):
     calc = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(calc, received):
         return None
+    # Защита от replay: подпись должна быть свежей
+    ad = pairs.get("auth_date", "")
+    if not ad.isdigit() or now() - int(ad) > MAX_AUTH_AGE:
+        return None
     try:
         return json.loads(pairs.get("user", "{}"))
     except Exception:
@@ -257,7 +288,7 @@ def validate_init_data(init_data: str):
 # ---------- эндпоинты ----------
 @app.get("/health")
 def health():
-    return {"ok": True, "bot": bool(BOT_TOKEN), "db": "postgres" if USE_PG else "sqlite", "time": now()}
+    return {"ok": True, "db": "postgres" if USE_PG else "sqlite"}
 
 
 @app.post("/stars/invoice")
@@ -273,6 +304,8 @@ async def stars_invoice(request: Request):
     if not plan:
         raise HTTPException(400, "Неизвестный тариф")
     user_id = user.get("id", 0)
+    if not rate_limit(f"invoice:{user_id}", 10, 60):
+        raise HTTPException(429, "Слишком много запросов")
     ensure_user(user_id, user.get("username"), user.get("first_name"))
     payload = f"{user_id}:{plan_id}:{now()}"
     data = {
@@ -296,7 +329,7 @@ async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str = Header(default=""),
 ):
-    if WEBHOOK_SECRET and x_telegram_bot_api_secret_token != WEBHOOK_SECRET:
+    if not WEBHOOK_SECRET or x_telegram_bot_api_secret_token != WEBHOOK_SECRET:
         raise HTTPException(403, "bad secret")
     update = await request.json()
 
@@ -396,6 +429,8 @@ async def referral_payout(request: Request):
     if user is None:
         raise HTTPException(401, "Неверная подпись initData")
     uid = user.get("id", 0)
+    if not rate_limit(f"payout:{uid}", 5, 600):
+        raise HTTPException(429, "Слишком много запросов")
     ensure_user(uid, user.get("username"), user.get("first_name"))
     me_row = query("SELECT wallet FROM users WHERE user_id=?", (uid,))
     wallet = (body.get("wallet") or (me_row[0]["wallet"] if me_row else "") or "").strip()[:120]
@@ -414,7 +449,10 @@ async def referral_payout(request: Request):
 
 
 @app.get("/set_webhook")
-def set_webhook(url: str, secret: str = ""):
+def set_webhook(url: str, secret: str = "", token: str = ""):
+    # Служебный эндпоинт: включается только при заданном SETUP_TOKEN
+    if not SETUP_TOKEN or token != SETUP_TOKEN:
+        raise HTTPException(403, "forbidden")
     if not BOT_TOKEN:
         raise HTTPException(500, "BOT_TOKEN не задан")
     data = {"url": url, "allowed_updates": ["message", "pre_checkout_query"]}

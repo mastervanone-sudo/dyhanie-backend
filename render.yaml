@@ -18,5 +18,9 @@ services:
         sync: false
       - key: WEBHOOK_SECRET
         sync: false
+      - key: SETUP_TOKEN
+        sync: false
+      - key: MAX_AUTH_AGE
+        value: "86400"
       - key: DATABASE_URL
         sync: false
